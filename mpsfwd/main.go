@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -354,6 +355,188 @@ func run_client(listen, addr, fwd string) {
 	serv.Run()
 }
 
+func run_proxy(listen, addr string) {
+	rand.Seed(time.Now().Unix())
+	id := rand.Uint32() * uint32(os.Getpid()) // random client id
+	log.Printf("run_proxy: %d", id)
+	genpath := func() (net.Conn, error) {
+		path, err := session.Dial(addr)
+		if err != nil {
+			log.Printf("dial %v", err)
+			return nil, err
+		}
+		bufid := make([]byte, 4)
+		binary.LittleEndian.PutUint32(bufid[0:], id)
+		path.Write(bufid) // send client id
+		log.Printf("new path <%s> for %d", path.LocalAddr().String(), id)
+		return path, nil
+	}
+	// first path
+	path, err := genpath()
+	if err != nil {
+		return
+	}
+	s := mpstream.NewStream("client")
+	s.Add(path, path.LocalAddr().String())
+	s.SetLogger(&logger{prefix: "client"})
+	// prepare 2nd path
+	path2, err := genpath()
+	if err != nil {
+		return
+	}
+	s.Add(path2, path2.LocalAddr().String())
+	m := &sync.Mutex{}
+	mw := &sync.Mutex{}
+	conns := make([]Connection, 256)
+	// okay start localserver
+	serv, err := session.NewServer(listen, func(conn net.Conn) {
+		defer conn.Close()
+		// wait CONNECT
+		request := make([]byte, 256)
+		conn.Read(request)
+		a := strings.Split(string(request), " ")
+		if len(a) != 3 {
+			// bad request
+			return
+		}
+		if a[0] != "CONNECT" {
+			// bad request
+			return
+		}
+		conn.Write([]byte("HTTP/1.0 200 Established\r\n\r\n"))
+		// assume a[1] is host:port
+		fwd := a[1]
+		log.Printf("proxy to %s", fwd)
+		// assign new cid
+		cid := 256
+		m.Lock()
+		for i := 0; i < 256; i++ {
+			if conns[i].running == false {
+				conns[i].conn = conn
+				conns[i].connected = true
+				conns[i].running = true
+				cid = i
+				break
+			}
+		}
+		m.Unlock()
+		log.Printf("cid=%d", cid)
+		if cid == 256 {
+			// no cid
+			return
+		}
+		// start reader
+		head := make([]byte, 4)
+		buf := make([]byte, BufSize)
+		// fwdreq
+		sz := len(fwd)
+		head[0] = 'C'
+		head[1] = byte(cid)
+		head[2] = byte(sz >> 8)
+		head[3] = byte(sz)
+		mw.Lock()
+		err0 := writebytes(s, head)
+		err1 := writebytes(s, []byte(fwd))
+		mw.Unlock()
+		if err0 != nil || err1 != nil {
+			return
+		}
+		for s.IsRunning() {
+			r, _ := conn.Read(buf)
+			if r <= 0 {
+				break
+			}
+			head[0] = 'D'
+			head[1] = byte(cid)
+			head[2] = byte(r >> 8)
+			head[3] = byte(r)
+			mw.Lock()
+			err0 := writebytes(s, head)
+			err1 := writebytes(s, buf[:r])
+			mw.Unlock()
+			if err0 != nil || err1 != nil {
+				break
+			}
+		}
+		log.Printf("close cid=%d", cid)
+		conns[cid].connected = false
+		conns[cid].conn = nil
+		head[0] = 'c'
+		head[1] = byte(cid)
+		head[2] = 0
+		head[3] = 0
+		mw.Lock()
+		writebytes(s, head)
+		mw.Unlock()
+		log.Printf("[c] sent")
+	})
+	if err != nil {
+		return
+	}
+	// handle multiplex connection
+	go func() {
+		head := make([]byte, 4)
+		buf := make([]byte, BufSize)
+		for s.IsRunning() {
+			if readbytes(s, head) != nil {
+				// stream closed
+				break
+			}
+			idx := int(head[1])
+			sz := (int(head[2]) << 8) | int(head[3])
+			if sz > BufSize {
+				// something wrong
+				break
+			}
+			if sz > 0 && readbytes(s, buf[:sz]) != nil {
+				// stream is dead
+				break
+			}
+			//log.Printf("get %d", head[0])
+			if head[0] == 'c' {
+				if conns[idx].connected {
+					conns[idx].conn.Close()
+					conns[idx].connected = false
+				}
+				conns[idx].running = false
+				continue
+			}
+			if conns[idx].connected == false {
+				// unknown id, just ignore
+				continue
+			}
+			// TODO
+			//log.Printf("transfer %d bytes for %d", sz, idx)
+			if writebytes(conns[idx].conn, buf[:sz]) != nil {
+				// something wrong
+				break
+			}
+		}
+	}()
+	// multipath
+	go func() {
+		prev := 0
+		for s.IsRunning() {
+			curr := s.NumPaths()
+			if prev != curr {
+				log.Printf("paths: %d", s.NumPaths())
+				prev = curr
+			}
+			if curr < 3 {
+				conn, err := genpath()
+				if err != nil {
+					// ignore
+					continue
+				}
+				s.Add(conn, conn.LocalAddr().String())
+			}
+			s.RemoveDeadPaths()
+			time.Sleep(time.Minute)
+		}
+	}()
+	serv.Run()
+}
+
 func runcmd(cmd string, args []string) {
 	switch cmd {
 	case "server":
@@ -362,6 +545,11 @@ func runcmd(cmd string, args []string) {
 	case "client":
 		if len(args) >= 3 {
 			run_client(args[0], args[1], args[2])
+			os.Exit(0)
+		}
+	case "proxy":
+		if len(args) >= 2 {
+			run_proxy(args[0], args[1])
 			os.Exit(0)
 		}
 	}
