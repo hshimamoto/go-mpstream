@@ -393,25 +393,32 @@ func run_proxy(listen, addr string) {
 	m := &sync.Mutex{}
 	mw := &sync.Mutex{}
 	conns := make([]Connection, 256)
-	// okay start localserver
-	serv, err := session.NewServer(listen, func(conn net.Conn) {
-		defer conn.Close()
+	// getfwd
+	getfwd := func(conn net.Conn) string {
 		// wait CONNECT
 		request := make([]byte, 256)
 		conn.Read(request)
 		a := strings.Split(string(request), " ")
 		if len(a) != 3 {
 			// bad request
-			return
+			return ""
 		}
 		if a[0] != "CONNECT" {
 			// bad request
-			return
+			return ""
 		}
 		conn.Write([]byte("HTTP/1.0 200 Established\r\n\r\n"))
-		// assume a[1] is host:port
 		fwd := a[1]
 		log.Printf("proxy to %s", fwd)
+		return fwd
+	}
+	// okay start localserver
+	serv, err := session.NewServer(listen, func(conn net.Conn) {
+		defer conn.Close()
+		fwd := getfwd(conn)
+		if fwd == "" {
+			return
+		}
 		// assign new cid
 		cid := 256
 		m.Lock()
