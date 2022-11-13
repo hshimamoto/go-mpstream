@@ -189,6 +189,41 @@ func run_server(addr string) {
 	serv.Run()
 }
 
+func run_client_internal_loop(s *mpstream.Stream, cid int, fwd string, mw *sync.Mutex, conn net.Conn) {
+	head := make([]byte, 4)
+	buf := make([]byte, BufSize)
+	// fwdreq
+	sz := len(fwd)
+	head[0] = 'C'
+	head[1] = byte(cid)
+	head[2] = byte(sz >> 8)
+	head[3] = byte(sz)
+	mw.Lock()
+	err0 := writebytes(s, head)
+	err1 := writebytes(s, []byte(fwd))
+	mw.Unlock()
+	if err0 != nil || err1 != nil {
+		return
+	}
+	for s.IsRunning() {
+		r, _ := conn.Read(buf)
+		if r <= 0 {
+			break
+		}
+		head[0] = 'D'
+		head[1] = byte(cid)
+		head[2] = byte(r >> 8)
+		head[3] = byte(r)
+		mw.Lock()
+		err0 := writebytes(s, head)
+		err1 := writebytes(s, buf[:r])
+		mw.Unlock()
+		if err0 != nil || err1 != nil {
+			break
+		}
+	}
+}
+
 func run_client(listen, addr, fwd string) {
 	rand.Seed(time.Now().Unix())
 	id := rand.Uint32() * uint32(os.Getpid()) // random client id
@@ -245,37 +280,7 @@ func run_client(listen, addr, fwd string) {
 		}
 		// start reader
 		head := make([]byte, 4)
-		buf := make([]byte, BufSize)
-		// fwdreq
-		sz := len(fwd)
-		head[0] = 'C'
-		head[1] = byte(cid)
-		head[2] = byte(sz >> 8)
-		head[3] = byte(sz)
-		mw.Lock()
-		err0 := writebytes(s, head)
-		err1 := writebytes(s, []byte(fwd))
-		mw.Unlock()
-		if err0 != nil || err1 != nil {
-			return
-		}
-		for s.IsRunning() {
-			r, _ := conn.Read(buf)
-			if r <= 0 {
-				break
-			}
-			head[0] = 'D'
-			head[1] = byte(cid)
-			head[2] = byte(r >> 8)
-			head[3] = byte(r)
-			mw.Lock()
-			err0 := writebytes(s, head)
-			err1 := writebytes(s, buf[:r])
-			mw.Unlock()
-			if err0 != nil || err1 != nil {
-				break
-			}
-		}
+		run_client_internal_loop(s, cid, fwd, mw, conn)
 		log.Printf("close cid=%d", cid)
 		conns[cid].connected = false
 		conns[cid].conn = nil
@@ -427,37 +432,7 @@ func run_proxy(listen, addr string) {
 		}
 		// start reader
 		head := make([]byte, 4)
-		buf := make([]byte, BufSize)
-		// fwdreq
-		sz := len(fwd)
-		head[0] = 'C'
-		head[1] = byte(cid)
-		head[2] = byte(sz >> 8)
-		head[3] = byte(sz)
-		mw.Lock()
-		err0 := writebytes(s, head)
-		err1 := writebytes(s, []byte(fwd))
-		mw.Unlock()
-		if err0 != nil || err1 != nil {
-			return
-		}
-		for s.IsRunning() {
-			r, _ := conn.Read(buf)
-			if r <= 0 {
-				break
-			}
-			head[0] = 'D'
-			head[1] = byte(cid)
-			head[2] = byte(r >> 8)
-			head[3] = byte(r)
-			mw.Lock()
-			err0 := writebytes(s, head)
-			err1 := writebytes(s, buf[:r])
-			mw.Unlock()
-			if err0 != nil || err1 != nil {
-				break
-			}
-		}
+		run_client_internal_loop(s, cid, fwd, mw, conn)
 		log.Printf("close cid=%d", cid)
 		conns[cid].connected = false
 		conns[cid].conn = nil
