@@ -224,10 +224,10 @@ func run_client_internal_loop(s *mpstream.Stream, cid int, fwd string, mw *sync.
 	}
 }
 
-func run_client(listen, addr, fwd string) {
+func run_client_common(fname, listen, addr string, getfwd func(net.Conn) string) {
 	rand.Seed(time.Now().Unix())
 	id := rand.Uint32() * uint32(os.Getpid()) // random client id
-	log.Printf("run_client: %d", id)
+	log.Printf("%s: %d", fname, id)
 	genpath := func() (net.Conn, error) {
 		path, err := session.Dial(addr)
 		if err != nil {
@@ -260,6 +260,7 @@ func run_client(listen, addr, fwd string) {
 	// okay start localserver
 	serv, err := session.NewServer(listen, func(conn net.Conn) {
 		defer conn.Close()
+		fwd := getfwd(conn)
 		// assign new cid
 		cid := 256
 		m.Lock()
@@ -360,40 +361,14 @@ func run_client(listen, addr, fwd string) {
 	serv.Run()
 }
 
+func run_client(listen, addr, fwd string) {
+	getfwd := func(conn net.Conn) string {
+		return fwd
+	}
+	run_client_common("run_client", listen, addr, getfwd)
+}
+
 func run_proxy(listen, addr string) {
-	rand.Seed(time.Now().Unix())
-	id := rand.Uint32() * uint32(os.Getpid()) // random client id
-	log.Printf("run_proxy: %d", id)
-	genpath := func() (net.Conn, error) {
-		path, err := session.Dial(addr)
-		if err != nil {
-			log.Printf("dial %v", err)
-			return nil, err
-		}
-		bufid := make([]byte, 4)
-		binary.LittleEndian.PutUint32(bufid[0:], id)
-		path.Write(bufid) // send client id
-		log.Printf("new path <%s> for %d", path.LocalAddr().String(), id)
-		return path, nil
-	}
-	// first path
-	path, err := genpath()
-	if err != nil {
-		return
-	}
-	s := mpstream.NewStream("client")
-	s.Add(path, path.LocalAddr().String())
-	s.SetLogger(&logger{prefix: "client"})
-	// prepare 2nd path
-	path2, err := genpath()
-	if err != nil {
-		return
-	}
-	s.Add(path2, path2.LocalAddr().String())
-	m := &sync.Mutex{}
-	mw := &sync.Mutex{}
-	conns := make([]Connection, 256)
-	// getfwd
 	getfwd := func(conn net.Conn) string {
 		// wait CONNECT
 		request := make([]byte, 256)
@@ -412,111 +387,7 @@ func run_proxy(listen, addr string) {
 		log.Printf("proxy to %s", fwd)
 		return fwd
 	}
-	// okay start localserver
-	serv, err := session.NewServer(listen, func(conn net.Conn) {
-		defer conn.Close()
-		fwd := getfwd(conn)
-		if fwd == "" {
-			return
-		}
-		// assign new cid
-		cid := 256
-		m.Lock()
-		for i := 0; i < 256; i++ {
-			if conns[i].running == false {
-				conns[i].conn = conn
-				conns[i].connected = true
-				conns[i].running = true
-				cid = i
-				break
-			}
-		}
-		m.Unlock()
-		log.Printf("cid=%d", cid)
-		if cid == 256 {
-			// no cid
-			return
-		}
-		// start reader
-		head := make([]byte, 4)
-		run_client_internal_loop(s, cid, fwd, mw, conn)
-		log.Printf("close cid=%d", cid)
-		conns[cid].connected = false
-		conns[cid].conn = nil
-		head[0] = 'c'
-		head[1] = byte(cid)
-		head[2] = 0
-		head[3] = 0
-		mw.Lock()
-		writebytes(s, head)
-		mw.Unlock()
-		log.Printf("[c] sent")
-	})
-	if err != nil {
-		return
-	}
-	// handle multiplex connection
-	go func() {
-		head := make([]byte, 4)
-		buf := make([]byte, BufSize)
-		for s.IsRunning() {
-			if readbytes(s, head) != nil {
-				// stream closed
-				break
-			}
-			idx := int(head[1])
-			sz := (int(head[2]) << 8) | int(head[3])
-			if sz > BufSize {
-				// something wrong
-				break
-			}
-			if sz > 0 && readbytes(s, buf[:sz]) != nil {
-				// stream is dead
-				break
-			}
-			//log.Printf("get %d", head[0])
-			if head[0] == 'c' {
-				if conns[idx].connected {
-					conns[idx].conn.Close()
-					conns[idx].connected = false
-				}
-				conns[idx].running = false
-				continue
-			}
-			if conns[idx].connected == false {
-				// unknown id, just ignore
-				continue
-			}
-			// TODO
-			//log.Printf("transfer %d bytes for %d", sz, idx)
-			if writebytes(conns[idx].conn, buf[:sz]) != nil {
-				// something wrong
-				break
-			}
-		}
-	}()
-	// multipath
-	go func() {
-		prev := 0
-		for s.IsRunning() {
-			curr := s.NumPaths()
-			if prev != curr {
-				log.Printf("paths: %d", s.NumPaths())
-				prev = curr
-			}
-			if curr < 3 {
-				conn, err := genpath()
-				if err != nil {
-					// ignore
-					continue
-				}
-				s.Add(conn, conn.LocalAddr().String())
-			}
-			s.RemoveDeadPaths()
-			time.Sleep(time.Minute)
-		}
-	}()
-	serv.Run()
+	run_client_common("run_proxy", listen, addr, getfwd)
 }
 
 func runcmd(cmd string, args []string) {
