@@ -95,6 +95,7 @@ func (c *Connection) run(addr string, s mpstream.Conn, m *sync.Mutex) {
 		err1 := writebytes(s, buf[:r])
 		m.Unlock()
 		if err0 != nil || err1 != nil {
+			log.Printf("connection to %s cid=%d: writebytes failed", addr, c.n)
 			// stream is dead
 			c.conn.Close()
 			c.connected = false
@@ -168,8 +169,9 @@ func service(serv *mpstream.Server, s *mpstream.Stream) {
 		}
 		// TODO avoid blocking?
 		//log.Printf("transfer %d bytes for %d", sz, idx)
-		if writebytes(conn.conn, buf[:sz]) != nil {
+		if err := writebytes(conn.conn, buf[:sz]); err != nil {
 			// something wrong
+			log.Printf("service: %v", err)
 			conn.conn.Close()
 			conn.connected = false
 			conn.running = false
@@ -219,9 +221,11 @@ func run_client_internal_loop(s *mpstream.Stream, cid int, fwd string, mw *sync.
 		err1 := writebytes(s, buf[:r])
 		mw.Unlock()
 		if err0 != nil || err1 != nil {
+			log.Printf("run_client_internal_loop: bad write")
 			break
 		}
 	}
+	log.Printf("run_client_internal_loop: end")
 }
 
 func run_client_common(fname, listen, addr string, getfwd func(net.Conn) string) {
@@ -304,6 +308,7 @@ func run_client_common(fname, listen, addr string, getfwd func(net.Conn) string)
 		for s.IsRunning() {
 			if readbytes(s, head) != nil {
 				// stream closed
+				log.Printf("run_client_common: bad header")
 				break
 			}
 			idx := int(head[1])
@@ -314,6 +319,7 @@ func run_client_common(fname, listen, addr string, getfwd func(net.Conn) string)
 			}
 			if sz > 0 && readbytes(s, buf[:sz]) != nil {
 				// stream is dead
+				log.Printf("run_client_common: bad data")
 				break
 			}
 			//log.Printf("get %d", head[0])
@@ -333,6 +339,7 @@ func run_client_common(fname, listen, addr string, getfwd func(net.Conn) string)
 			//log.Printf("transfer %d bytes for %d", sz, idx)
 			if writebytes(conns[idx].conn, buf[:sz]) != nil {
 				// something wrong
+				log.Printf("run_client_common: writebytes failed")
 				break
 			}
 		}
