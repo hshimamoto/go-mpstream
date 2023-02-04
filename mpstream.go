@@ -227,6 +227,7 @@ type Stream struct {
 	rbuf  *buffer
 	wwait *waiter
 	rwait *waiter
+	mrbuf sync.Mutex
 	// sending data
 	mpending   sync.Mutex
 	pending    []byte
@@ -305,6 +306,9 @@ func (s *Stream) upcall(b []byte) error {
 		b[i] ^= 0x66
 	}
 	seq := binary.LittleEndian.Uint32(b[:4])
+	// avoid pushing race
+	s.mrbuf.Lock()
+	defer s.mrbuf.Unlock()
 	if s.rseq.Load() != seq {
 		// discard
 		return nil
