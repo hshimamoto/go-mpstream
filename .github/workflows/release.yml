@@ -15,10 +15,10 @@ jobs:
       - name: show go version
         run: go version
       - name: build
-        run: go build -o mpsfwd.x86-64
+        run: CGO_ENABLED=0 go build -o mpsfwd.x86-64
         working-directory: ./mpsfwd
       - name: build for arm64
-        run: GOARCH=arm64 go build -o mpsfwd.arm64
+        run: CGO_ENABLED=0 GOARCH=arm64 go build -o mpsfwd.arm64
         working-directory: ./mpsfwd
       - name: build for Windows
         run: GOOS=windows go build -o mpsfwd.exe
