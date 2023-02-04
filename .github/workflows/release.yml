@@ -13,9 +13,8 @@ jobs:
         working-directory: ./mpsfwd
       - name: release
         uses: softprops/action-gh-release@v1
-        working-directory: ./mpsfwd
         with:
           name: Latest files
           tag_name: latest
           files: |
-            mpsfwd.x86-64
+            mpsfwd/mpsfwd.x86-64
