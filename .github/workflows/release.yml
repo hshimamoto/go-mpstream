@@ -15,7 +15,7 @@ jobs:
       - name: show go version
         run: go version
       - name: build
-        run: CGO_ENABLED=0 go build -o mpsfwd.x86-64
+        run: CGO_ENABLED=0 go build -o mpsfwd.amd64
         working-directory: ./mpsfwd
       - name: build for arm64
         run: CGO_ENABLED=0 GOARCH=arm64 go build -o mpsfwd.arm64
@@ -29,6 +29,6 @@ jobs:
           name: Latest files
           tag_name: latest
           files: |
-            mpsfwd/mpsfwd.x86-64
+            mpsfwd/mpsfwd.amd64
             mpsfwd/mpsfwd.arm64
             mpsfwd/mpsfwd.exe
