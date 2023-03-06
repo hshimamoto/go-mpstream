@@ -207,6 +207,7 @@ func run_client_internal_loop(s *mpstream.Stream, cid int, fwd string, mw *sync.
 	if err0 != nil || err1 != nil {
 		return
 	}
+	time.Sleep(100 * time.Millisecond)
 	for s.IsRunning() {
 		r, _ := conn.Read(buf)
 		if r <= 0 {
