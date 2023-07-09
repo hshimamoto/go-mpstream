@@ -2,10 +2,8 @@
 package main
 
 import (
-	"encoding/binary"
 	"fmt"
 	"log"
-	"math/rand"
 	"net"
 	"os"
 	"strings"
@@ -229,36 +227,24 @@ func run_client_internal_loop(s *mpstream.Stream, cid int, fwd string, mw *sync.
 	log.Printf("run_client_internal_loop: end")
 }
 
+func dialpath(addr string) (net.Conn, error) {
+	path, err := session.Dial(addr)
+	if err != nil {
+		log.Printf("dial %v", err)
+		return nil, err
+	}
+	log.Printf("new path <%s>", path.LocalAddr().String())
+	return path, nil
+}
+
 func run_client_common(fname, listen, addr string, getfwd func(net.Conn) string) {
-	rand.Seed(time.Now().Unix())
-	id := rand.Uint32() * uint32(os.Getpid()) // random client id
-	log.Printf("%s: %d", fname, id)
-	genpath := func() (net.Conn, error) {
-		path, err := session.Dial(addr)
-		if err != nil {
-			log.Printf("dial %v", err)
-			return nil, err
-		}
-		bufid := make([]byte, 4)
-		binary.LittleEndian.PutUint32(bufid[0:], id)
-		path.Write(bufid) // send client id
-		log.Printf("new path <%s> for %d", path.LocalAddr().String(), id)
-		return path, nil
-	}
-	// first path
-	path, err := genpath()
+	cli, err := mpstream.NewClient(addr, 3, dialpath)
 	if err != nil {
+		log.Printf("NewClient: %v", err)
 		return
 	}
-	s := mpstream.NewStream("client")
-	s.Add(path, path.LocalAddr().String())
+	s := cli.Stream()
 	s.SetLogger(&logger{prefix: "client"})
-	// prepare 2nd path
-	path2, err := genpath()
-	if err != nil {
-		return
-	}
-	s.Add(path2, path2.LocalAddr().String())
 	m := &sync.Mutex{}
 	mw := &sync.Mutex{}
 	conns := make([]Connection, 256)
@@ -343,27 +329,6 @@ func run_client_common(fname, listen, addr string, getfwd func(net.Conn) string)
 				log.Printf("run_client_common: writebytes failed")
 				break
 			}
-		}
-	}()
-	// multipath
-	go func() {
-		prev := 0
-		for s.IsRunning() {
-			curr := s.NumPaths()
-			if prev != curr {
-				log.Printf("paths: %d", s.NumPaths())
-				prev = curr
-			}
-			if curr < 3 {
-				conn, err := genpath()
-				if err != nil {
-					// ignore
-					continue
-				}
-				s.Add(conn, conn.LocalAddr().String())
-			}
-			s.RemoveDeadPaths()
-			time.Sleep(time.Minute)
 		}
 	}()
 	serv.Run()
