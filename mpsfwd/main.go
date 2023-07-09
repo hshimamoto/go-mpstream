@@ -237,7 +237,7 @@ func dialpath(addr string) (net.Conn, error) {
 	return path, nil
 }
 
-func run_client_common(fname, listen, addr string, getfwd func(net.Conn) string) {
+func run_client_common(fname, listen, addr string, getfwd func(net.Conn) (string, error)) {
 	cli, err := mpstream.NewClient(addr, 3, dialpath)
 	if err != nil {
 		log.Printf("NewClient: %v", err)
@@ -251,7 +251,11 @@ func run_client_common(fname, listen, addr string, getfwd func(net.Conn) string)
 	// okay start localserver
 	serv, err := session.NewServer(listen, func(conn net.Conn) {
 		defer conn.Close()
-		fwd := getfwd(conn)
+		fwd, err := getfwd(conn)
+		if err != nil {
+			log.Printf("getfwd: %v", err)
+			return
+		}
 		// assign new cid
 		cid := 256
 		m.Lock()
@@ -335,30 +339,30 @@ func run_client_common(fname, listen, addr string, getfwd func(net.Conn) string)
 }
 
 func run_client(listen, addr, fwd string) {
-	getfwd := func(conn net.Conn) string {
-		return fwd
+	getfwd := func(conn net.Conn) (string, error) {
+		return fwd, nil
 	}
 	run_client_common("run_client", listen, addr, getfwd)
 }
 
 func run_proxy(listen, addr string) {
-	getfwd := func(conn net.Conn) string {
+	getfwd := func(conn net.Conn) (string, error) {
 		// wait CONNECT
 		request := make([]byte, 256)
 		conn.Read(request)
 		a := strings.Split(string(request), " ")
-		if len(a) != 3 {
+		if len(a) < 3 {
 			// bad request
-			return ""
+			return "", fmt.Errorf("bad request [len=%d]", len(a))
 		}
 		if a[0] != "CONNECT" {
 			// bad request
-			return ""
+			return "", fmt.Errorf("bad request [method=%s]", a[0])
 		}
 		conn.Write([]byte("HTTP/1.0 200 Established\r\n\r\n"))
 		fwd := a[1]
 		log.Printf("proxy to %s", fwd)
-		return fwd
+		return fwd, nil
 	}
 	run_client_common("run_proxy", listen, addr, getfwd)
 }
