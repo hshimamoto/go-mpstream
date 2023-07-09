@@ -2,6 +2,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -41,6 +42,33 @@ type Connection struct {
 	running   bool
 }
 
+type RW interface {
+	Read([]byte) (int, error)
+	Write([]byte) (int, error)
+}
+
+var EOF = errors.New("EOF")
+var EWrite = errors.New("EWrite")
+
+func localToStream(conn RW, s mpstream.Conn, m *sync.Mutex, cid int, head, buf []byte) error {
+	r, _ := conn.Read(buf)
+	if r <= 0 {
+		return EOF
+	}
+	head[0] = 'D'
+	head[1] = byte(cid)
+	head[2] = byte(r >> 8)
+	head[3] = byte(r)
+	m.Lock()
+	err0 := writebytes(s, head)
+	err1 := writebytes(s, buf[:r])
+	m.Unlock()
+	if err0 != nil || err1 != nil {
+		return EWrite
+	}
+	return nil
+}
+
 func (c *Connection) run(addr string, s mpstream.Conn, m *sync.Mutex) {
 	conn, err := session.Dial(addr)
 	if err != nil {
@@ -53,24 +81,9 @@ func (c *Connection) run(addr string, s mpstream.Conn, m *sync.Mutex) {
 	head := make([]byte, 4)
 	buf := make([]byte, BufSize)
 	for c.running {
-		r, _ := c.conn.Read(buf)
-		if r <= 0 {
-			c.conn.Close()
-			c.connected = false
-			c.running = false
-			break
-		}
-		head[0] = 'D'
-		head[1] = byte(c.n)
-		head[2] = byte(r >> 8)
-		head[3] = byte(r)
-		m.Lock()
-		err0 := writebytes(s, head)
-		err1 := writebytes(s, buf[:r])
-		m.Unlock()
-		if err0 != nil || err1 != nil {
-			log.Printf("connection to %s cid=%d: writebytes failed", addr, c.n)
-			// stream is dead
+		err := localToStream(c.conn, s, m, c.n, head, buf)
+		if err != nil {
+			log.Printf("localToStream [%s:%d]: %v", addr, c.n, err)
 			c.conn.Close()
 			c.connected = false
 			c.running = false
@@ -183,20 +196,9 @@ func run_client_internal_loop(s *mpstream.Stream, cid int, fwd string, mw *sync.
 	}
 	time.Sleep(100 * time.Millisecond)
 	for s.IsRunning() {
-		r, _ := conn.Read(buf)
-		if r <= 0 {
-			break
-		}
-		head[0] = 'D'
-		head[1] = byte(cid)
-		head[2] = byte(r >> 8)
-		head[3] = byte(r)
-		mw.Lock()
-		err0 := writebytes(s, head)
-		err1 := writebytes(s, buf[:r])
-		mw.Unlock()
-		if err0 != nil || err1 != nil {
-			log.Printf("run_client_internal_loop: bad write")
+		err := localToStream(conn, s, mw, cid, head, buf)
+		if err != nil {
+			log.Printf("run_client_internal_loop: localToStream: %v", err)
 			break
 		}
 	}
