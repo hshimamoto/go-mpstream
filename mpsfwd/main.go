@@ -48,6 +48,8 @@ type RW interface {
 }
 
 var EOF = errors.New("EOF")
+var EHeader = errors.New("Bad Header")
+var EData = errors.New("Bad Data")
 var EWrite = errors.New("EWrite")
 
 func localToStream(conn RW, s mpstream.Conn, m *sync.Mutex, cid int, head, buf []byte) error {
@@ -67,6 +69,20 @@ func localToStream(conn RW, s mpstream.Conn, m *sync.Mutex, cid int, head, buf [
 		return EWrite
 	}
 	return nil
+}
+
+func readFromStream(s mpstream.Conn, head, buf []byte) (int, error) {
+	if readbytes(s, head) != nil {
+		return 0, EOF
+	}
+	sz := (int(head[2]) << 8) | int(head[3])
+	if sz > BufSize {
+		return 0, EHeader
+	}
+	if sz > 0 && readbytes(s, buf[:sz]) != nil {
+		return 0, EData
+	}
+	return sz, nil
 }
 
 func (c *Connection) run(addr string, s mpstream.Conn, m *sync.Mutex) {
@@ -112,21 +128,12 @@ func service(serv *mpstream.Server, s *mpstream.Stream) {
 		if s.NumPaths() > 3 {
 			s.RemoveDeadPaths()
 		}
-		//log.Printf("reading header")
-		if readbytes(s, head) != nil {
-			// stream is dead
+		sz, err := readFromStream(s, head, buf)
+		if err != nil {
+			log.Printf("readFromStream: %v", err)
 			break
 		}
 		idx := int(head[1])
-		sz := (int(head[2]) << 8) | int(head[3])
-		if sz > BufSize {
-			// something wrong
-			break
-		}
-		if sz > 0 && readbytes(s, buf[:sz]) != nil {
-			// stream is dead
-			break
-		}
 		//log.Printf("get %d", head[0])
 		if head[0] == 'C' {
 			// new connection
@@ -275,22 +282,12 @@ func run_client_common(fname, listen, addr string, getfwd func(net.Conn) (string
 		head := make([]byte, 4)
 		buf := make([]byte, BufSize)
 		for s.IsRunning() {
-			if readbytes(s, head) != nil {
-				// stream closed
-				log.Printf("run_client_common: bad header")
+			sz, err := readFromStream(s, head, buf)
+			if err != nil {
+				log.Printf("run_client_common: %v", err)
 				break
 			}
-			idx := int(head[1])
-			sz := (int(head[2]) << 8) | int(head[3])
-			if sz > BufSize {
-				// something wrong
-				break
-			}
-			if sz > 0 && readbytes(s, buf[:sz]) != nil {
-				// stream is dead
-				log.Printf("run_client_common: bad data")
-				break
-			}
+			idx := head[1]
 			//log.Printf("get %d", head[0])
 			if head[0] == 'c' {
 				if conns[idx].connected {
