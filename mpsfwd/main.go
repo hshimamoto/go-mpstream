@@ -387,5 +387,6 @@ func main() {
 	}
 	fmt.Println("mpsfwd server <addr>")
 	fmt.Println("mpsfwd client <listen> <addr> <fwd>")
+	fmt.Println("mpsfwd proxy <listen> <addr>")
 	os.Exit(1)
 }
