@@ -49,6 +49,24 @@ type RW interface {
 	Write([]byte) (int, error)
 }
 
+func sendToStream(s Writer, m *sync.Mutex, cmd byte, cid int, head, buf []byte) error {
+	sz := len(buf)
+	head[0] = cmd
+	head[1] = byte(cid)
+	head[2] = byte(sz >> 8)
+	head[3] = byte(sz)
+	m.Lock()
+	defer m.Unlock()
+	err := writebytes(s, head)
+	if err != nil {
+		return err
+	}
+	if sz > 0 {
+		err = writebytes(s, buf)
+	}
+	return err
+}
+
 func localToStream(conn RW, s Writer, m *sync.Mutex, cid int, head, buf []byte) error {
 	r, _ := conn.Read(buf)
 	if r <= 0 {

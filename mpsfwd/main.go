@@ -63,13 +63,7 @@ func (c *Connection) run(addr string, s mpstream.Conn, m *sync.Mutex) {
 		}
 	}
 	log.Printf("closing connection cid=%d", c.n)
-	head[0] = 'c'
-	head[1] = byte(c.n)
-	head[2] = 0
-	head[3] = 0
-	m.Lock()
-	writebytes(s, head)
-	m.Unlock()
+	sendToStream(s, m, 'c', c.n, head, nil)
 	c.running = false
 }
 
@@ -145,16 +139,8 @@ func run_client_internal_loop(s *mpstream.Stream, cid int, fwd string, mw *sync.
 	head := make([]byte, 4)
 	buf := make([]byte, BufSize)
 	// fwdreq
-	sz := len(fwd)
-	head[0] = 'C'
-	head[1] = byte(cid)
-	head[2] = byte(sz >> 8)
-	head[3] = byte(sz)
-	mw.Lock()
-	err0 := writebytes(s, head)
-	err1 := writebytes(s, []byte(fwd))
-	mw.Unlock()
-	if err0 != nil || err1 != nil {
+	err := sendToStream(s, mw, 'C', cid, head, []byte(fwd))
+	if err != nil {
 		return
 	}
 	time.Sleep(100 * time.Millisecond)
@@ -221,13 +207,7 @@ func run_client_common(fname, listen, addr string, getfwd func(net.Conn) (string
 		log.Printf("close cid=%d", cid)
 		conns[cid].connected = false
 		conns[cid].conn = nil
-		head[0] = 'c'
-		head[1] = byte(cid)
-		head[2] = 0
-		head[3] = 0
-		mw.Lock()
-		writebytes(s, head)
-		mw.Unlock()
+		sendToStream(s, mw, 'c', cid, head, nil)
 		log.Printf("[c] sent")
 	})
 	if err != nil {
