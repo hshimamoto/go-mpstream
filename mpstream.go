@@ -54,6 +54,7 @@ func newPath(name string, conn Conn, upcall UpcallFunc, acked AckedFunc) *Path {
 	p.lastRecv = time.Now()
 	go path_reader(p)
 	go path_writer(p)
+	go path_checker(p)
 	return p
 }
 
@@ -169,6 +170,14 @@ func path_writer(p *Path) {
 			prevack = ack
 			lastAck = now
 		}
+		time.Sleep(time.Second)
+	}
+	p.Infof("path_writer: done")
+}
+
+func path_checker(p *Path) {
+	for p.running {
+		now := time.Now()
 		// check Last Recv
 		p.mLastRcv.Lock()
 		if now.Sub(p.lastRecv) > time.Minute {
@@ -176,10 +185,13 @@ func path_writer(p *Path) {
 			p.dead = true
 		}
 		p.mLastRcv.Unlock()
-		// dummy
-		time.Sleep(time.Second)
+		if p.dead {
+			break
+		}
+		time.Sleep(3 * time.Second)
 	}
-	p.Infof("path_writer: done")
+	p.Close()
+	p.Infof("path_checker: done")
 }
 
 type waiter struct {
