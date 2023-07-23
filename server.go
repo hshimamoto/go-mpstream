@@ -36,8 +36,13 @@ func NewServer(addr string, service ServiceFunc) (*Server, error) {
 		s.m.Lock()
 		st, ok := s.streams[id]
 		if ok {
-			st.Add(conn, raddr)
-			s.logger.Infof("path add")
+			if st.IsRunning() {
+				st.Add(conn, raddr)
+				s.logger.Infof("cid=%d path add", id)
+			} else {
+				conn.Close()
+				s.logger.Infof("cid=%d not running", id)
+			}
 		} else {
 			st = NewStream(fmt.Sprintf("<%x>", id))
 			st.Add(conn, raddr)
