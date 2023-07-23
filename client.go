@@ -58,29 +58,20 @@ func (c *Client) start() error {
 	s := NewStream(name)
 	s.Add(path, path.LocalAddr().String())
 	go func() {
-		prev := 0
 		for s.IsRunning() {
 			curr := s.NumPaths()
-			if prev != curr {
-				prev = curr
-			}
 			if curr == 0 {
 				// lose all links
 				s.Close()
 				return
 			}
 			if curr < c.nr {
-				path, err := c.dialPath()
-				if err != nil {
-					// ignore
-					continue
+				if path, err := c.dialPath(); err == nil {
+					s.Add(path, path.LocalAddr().String())
 				}
-				s.Add(path, path.LocalAddr().String())
-				time.Sleep(time.Second)
-				continue
 			}
 			s.RemoveDeadPaths()
-			time.Sleep(time.Minute)
+			time.Sleep(10 * time.Second)
 		}
 	}()
 	c.s = s
