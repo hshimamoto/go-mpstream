@@ -37,6 +37,8 @@ type Path struct {
 	//
 	mLastRcv sync.Mutex
 	lastRecv time.Time
+	mLastAck sync.Mutex
+	lastAck  time.Time
 	dead     bool
 }
 
@@ -170,6 +172,9 @@ func path_writer(p *Path) {
 			prevack = ack
 			lastAck = now
 		}
+		p.mLastAck.Lock()
+		p.lastAck = time.Now()
+		p.mLastAck.Unlock()
 		time.Sleep(time.Second)
 	}
 	p.Infof("path_writer: done")
@@ -185,6 +190,16 @@ func path_checker(p *Path) {
 			p.dead = true
 		}
 		p.mLastRcv.Unlock()
+		if p.dead {
+			break
+		}
+		// check Last Ack
+		p.mLastAck.Lock()
+		if now.Sub(p.lastAck) > time.Minute {
+			// communication stopped
+			p.dead = true
+		}
+		p.mLastAck.Unlock()
 		if p.dead {
 			break
 		}
