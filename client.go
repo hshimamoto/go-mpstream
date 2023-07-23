@@ -57,13 +57,16 @@ func (c *Client) start() error {
 	name := fmt.Sprintf("client:%d", c.id)
 	s := NewStream(name)
 	s.Add(path, path.LocalAddr().String())
+	start := time.Now()
 	go func() {
 		for s.IsRunning() {
 			curr := s.NumPaths()
 			if curr == 0 {
-				// lose all links
-				s.Close()
-				return
+				if time.Now().Sub(start) > time.Minute {
+					// lose all links
+					s.Close()
+					return
+				}
 			}
 			if curr < c.nr {
 				if path, err := c.dialPath(); err == nil {

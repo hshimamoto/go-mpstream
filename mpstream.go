@@ -40,6 +40,7 @@ type Path struct {
 	mLastAck sync.Mutex
 	lastAck  time.Time
 	dead     bool
+	good     bool
 }
 
 func newPath(name string, conn Conn, upcall UpcallFunc, acked AckedFunc) *Path {
@@ -141,6 +142,7 @@ func path_reader(p *Path) {
 		p.mLastRcv.Lock()
 		p.lastRecv = time.Now()
 		p.dead = false
+		p.good = true
 		p.mLastRcv.Unlock()
 		// handle message
 		if m0 == 0xff {
@@ -189,6 +191,7 @@ func path_checker(p *Path) {
 		if now.Sub(p.lastRecv) > time.Minute {
 			// communication stopped
 			p.dead = true
+			p.good = false
 		}
 		p.mLastRcv.Unlock()
 		if p.dead {
@@ -199,6 +202,7 @@ func path_checker(p *Path) {
 		if now.Sub(p.lastAck) > time.Minute {
 			// communication stopped
 			p.dead = true
+			p.good = false
 		}
 		p.mLastAck.Unlock()
 		if p.dead {
@@ -296,6 +300,7 @@ func (s *Stream) Add(conn Conn, name string) {
 		s.prime = p
 	}
 	s.mPath.Unlock()
+	p.writeAck()
 }
 
 func (s *Stream) RemoveDeadPaths() {
@@ -316,7 +321,13 @@ func (s *Stream) RemoveDeadPaths() {
 func (s *Stream) NumPaths() int {
 	s.mPath.Lock()
 	defer s.mPath.Unlock()
-	return len(s.paths)
+	n := 0
+	for _, p := range s.paths {
+		if p.good {
+			n++
+		}
+	}
+	return n
 }
 
 func (s *Stream) IsRunning() bool {
