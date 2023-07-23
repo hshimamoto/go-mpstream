@@ -54,6 +54,7 @@ func newPath(name string, conn Conn, upcall UpcallFunc, acked AckedFunc) *Path {
 	p.acked = acked
 	p.logger = logger
 	p.lastRecv = time.Now()
+	p.lastAck = time.Now()
 	go path_reader(p)
 	go path_writer(p)
 	go path_checker(p)
