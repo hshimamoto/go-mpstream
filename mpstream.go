@@ -330,6 +330,10 @@ func (s *Stream) NumPaths() int {
 	return n
 }
 
+func (s *Stream) PrimeName() string {
+	return s.prime.name
+}
+
 func (s *Stream) IsRunning() bool {
 	return s.running
 }
