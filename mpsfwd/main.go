@@ -41,7 +41,7 @@ type Connection struct {
 	running   bool
 }
 
-func (c *Connection) run(addr string, s mpstream.Conn, m *sync.Mutex) {
+func (c *Connection) run(addr string, ds *DataStream) {
 	conn, err := session.Dial(addr)
 	if err != nil {
 		return
@@ -53,7 +53,7 @@ func (c *Connection) run(addr string, s mpstream.Conn, m *sync.Mutex) {
 	head := make([]byte, 4)
 	buf := make([]byte, BufSize)
 	for c.running {
-		err := localToStream(c.conn, s, m, c.n, head, buf)
+		err := ds.localToStream(c.conn, c.n, head, buf)
 		if err != nil {
 			log.Printf("localToStream [%s:%d]: %v", addr, c.n, err)
 			c.conn.Close()
@@ -63,7 +63,7 @@ func (c *Connection) run(addr string, s mpstream.Conn, m *sync.Mutex) {
 		}
 	}
 	log.Printf("closing connection cid=%d", c.n)
-	sendToStream(s, m, 'c', c.n, head, nil)
+	ds.sendToStream('c', c.n, head, nil)
 	c.running = false
 }
 
@@ -73,12 +73,15 @@ func service(serv *mpstream.Server, s *mpstream.Stream) {
 	head := make([]byte, 4)
 	buf := make([]byte, BufSize)
 	conns := make([]Connection, 256)
-	m := &sync.Mutex{}
+	ds := &DataStream{
+		s: s,
+		m: &sync.Mutex{},
+	}
 	for s.IsRunning() {
 		if s.NumPaths() > 3 {
 			s.RemoveDeadPaths()
 		}
-		sz, err := readFromStream(s, head, buf)
+		sz, err := ds.readFromStream(head, buf)
 		if err != nil {
 			log.Printf("readFromStream: %v", err)
 			break
@@ -93,7 +96,7 @@ func service(serv *mpstream.Server, s *mpstream.Stream) {
 			}
 			log.Printf("new connection cid=%d", idx)
 			conns[idx].n = idx
-			go (&conns[idx]).run(string(buf[:sz]), s, m)
+			go (&conns[idx]).run(string(buf[:sz]), ds)
 			continue
 		}
 		if head[0] == 'c' {
@@ -135,17 +138,18 @@ func run_server(addr string) {
 	serv.Run()
 }
 
-func run_client_internal_loop(s *mpstream.Stream, cid int, fwd string, mw *sync.Mutex, conn net.Conn) {
+func run_client_internal_loop(ds *DataStream, cid int, fwd string, conn net.Conn) {
 	head := make([]byte, 4)
 	buf := make([]byte, BufSize)
 	// fwdreq
-	err := sendToStream(s, mw, 'C', cid, head, []byte(fwd))
+	err := ds.sendToStream('C', cid, head, []byte(fwd))
 	if err != nil {
 		return
 	}
 	time.Sleep(100 * time.Millisecond)
+	s := ds.s.(*mpstream.Stream)
 	for s.IsRunning() {
-		err := localToStream(conn, s, mw, cid, head, buf)
+		err := ds.localToStream(conn, cid, head, buf)
 		if err != nil {
 			log.Printf("run_client_internal_loop: localToStream: %v", err)
 			break
@@ -172,8 +176,11 @@ func run_client_common(fname, listen, addr string, getfwd func(net.Conn) (string
 	}
 	s := cli.Stream()
 	s.SetLogger(&logger{prefix: "client"})
+	ds := &DataStream{
+		s: s,
+		m: &sync.Mutex{},
+	}
 	m := &sync.Mutex{}
-	mw := &sync.Mutex{}
 	conns := make([]Connection, 256)
 	// okay start localserver
 	serv, err := session.NewServer(listen, func(conn net.Conn) {
@@ -203,11 +210,11 @@ func run_client_common(fname, listen, addr string, getfwd func(net.Conn) (string
 		}
 		// start reader
 		head := make([]byte, 4)
-		run_client_internal_loop(s, cid, fwd, mw, conn)
+		run_client_internal_loop(ds, cid, fwd, conn)
 		log.Printf("close cid=%d", cid)
 		conns[cid].connected = false
 		conns[cid].conn = nil
-		sendToStream(s, mw, 'c', cid, head, nil)
+		ds.sendToStream('c', cid, head, nil)
 		log.Printf("[c] sent")
 	})
 	if err != nil {
@@ -218,7 +225,7 @@ func run_client_common(fname, listen, addr string, getfwd func(net.Conn) (string
 		head := make([]byte, 4)
 		buf := make([]byte, BufSize)
 		for s.IsRunning() {
-			sz, err := readFromStream(s, head, buf)
+			sz, err := ds.readFromStream(head, buf)
 			if err != nil {
 				log.Printf("run_client_common: %v", err)
 				break

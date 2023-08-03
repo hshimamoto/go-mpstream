@@ -49,6 +49,23 @@ type RW interface {
 	Write([]byte) (int, error)
 }
 
+type DataStream struct {
+	s RW
+	m *sync.Mutex
+}
+
+func (ds *DataStream) sendToStream(cmd byte, cid int, head, buf []byte) error {
+	return sendToStream(ds.s, ds.m, cmd, cid, head, buf)
+}
+
+func (ds *DataStream) localToStream(conn RW, cid int, head, buf []byte) error {
+	return localToStream(conn, ds.s, ds.m, cid, head, buf)
+}
+
+func (ds *DataStream) readFromStream(head, buf []byte) (int, error) {
+	return readFromStream(ds.s, head, buf)
+}
+
 func sendToStream(s Writer, m *sync.Mutex, cmd byte, cid int, head, buf []byte) error {
 	sz := len(buf)
 	head[0] = cmd
